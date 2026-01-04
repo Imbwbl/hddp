@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct Server {
     paths: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    not_found: Arc<Vec<u8>>,  
 }
 
 impl Default for Server {
@@ -33,12 +34,20 @@ impl Default for Server {
             Ok(file) => file,
             Err(e) => {
                 eprintln!("Failed to read the file: {}", e);
+                "default".to_string()
+            }
+        };
+
+        let file_not_found = match fs::read_to_string("pages/404/index.html") {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("Failed to read the file: {}", e);
                 "404".to_string()
             }
         };
         let response = HttpResponse::new(file.as_str());
         paths.insert("/".to_string(), response.into_bytes());
-        Server { paths: Arc::new(Mutex::new(paths)) }
+        Server { paths: Arc::new(Mutex::new(paths)), not_found: Arc::new(HttpResponse::new(file_not_found.as_str()).into_bytes()) }
     }
 }
 
@@ -60,20 +69,17 @@ impl Server {
             }
         };
         println!("{} {}", request.method, request.path);
-        let file = match fs::read_to_string("pages/404/index.html") {
-            Ok(file) => file,
-            Err(e) => {
-                eprintln!("Failed to read the file: {}", e);
-                "404".to_string()
-            }
-        };
-        let mut response = &HttpResponse::new(file.as_str()).into_bytes();
+        
         let map = self.paths.lock().unwrap();
-        for path in map.iter() {
+        let response = match map.get(request.path) {
+            Some(bytes) => bytes,    // Found it? Copy the data.
+            None => &self.not_found,  // Not found? Copy the 404 page.
+        };
+        /*for path in map.iter() {
             if *path.0 == request.path {
                 response = path.1;
             }
-        }
+        }*/
         //println!("{:#?}", String::from_utf8_lossy(response));
         match stream.write_all(response) {
             Ok(w) => w,
