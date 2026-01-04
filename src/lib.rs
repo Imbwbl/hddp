@@ -4,9 +4,10 @@ use request::{HttpRequest, HttpResponse};
 
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::fs;
 use std::io::{Read, Result, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::{fs, thread};
+use std::sync::{Arc, Mutex};
 
 /**
  * # struct Server
@@ -21,11 +22,11 @@ use std::net::{TcpListener, TcpStream, ToSocketAddrs};
  * ```
  */
 #[derive(Clone)]
-pub struct Server<'a> {
-    paths: HashMap<&'a str, Vec<u8>>,
+pub struct Server {
+    paths: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
-impl<'a> Default for Server<'a> {
+impl Default for Server {
     fn default() -> Self {
         let mut paths = HashMap::new();
         let file = match fs::read_to_string("pages/default/index.html") {
@@ -35,15 +36,13 @@ impl<'a> Default for Server<'a> {
                 "404".to_string()
             }
         };
-        let response = HttpResponse::new(
-            file.as_str(),
-        );
-        paths.insert("/", response.into_bytes());
-        Server { paths }
+        let response = HttpResponse::new(file.as_str());
+        paths.insert("/".to_string(), response.into_bytes());
+        Server { paths: Arc::new(Mutex::new(paths)) }
     }
 }
 
-impl<'a> Server<'a> {
+impl Server {
     fn handle_client(&self, mut stream: TcpStream) {
         let mut buffer: [u8; 1024] = [0; 1024];
         let bytes_read = match stream.read(&mut buffer) {
@@ -56,7 +55,7 @@ impl<'a> Server<'a> {
         let request = match HttpRequest::from(&buffer[..bytes_read]) {
             Ok(req) => req,
             Err(e) => {
-                eprintln!("Failed to read byte from stream: {}", e);
+                eprintln!("Failed to serialized as an HttpRequest: {}", e);
                 return;
             }
         };
@@ -69,7 +68,8 @@ impl<'a> Server<'a> {
             }
         };
         let mut response = &HttpResponse::new(file.as_str()).into_bytes();
-        for path in &self.paths {
+        let map = self.paths.lock().unwrap();
+        for path in map.iter() {
             if *path.0 == request.path {
                 response = path.1;
             }
@@ -100,8 +100,13 @@ impl<'a> Server<'a> {
 
         println!("Started Listening on http://{}", addr);
         // accept connections and process them serially
-        for stream in listener.incoming() {
-            self.handle_client(stream?);
+        for stream_result in listener.incoming() {
+            let stream = stream_result.expect("");
+            let server_clone = self.clone();
+            thread::spawn(move || {
+                server_clone.handle_client(stream);
+            });
+
         }
         Ok(())
     }
@@ -113,11 +118,9 @@ impl<'a> Server<'a> {
      * server.add_path("/pizza");
      * ```
      */
-    pub fn add_path(&mut self, path: &'a str, resp: HttpResponse<'a>) {
-        if self.paths.contains_key(&path) {
-            self.remove_path(path);
-        }
-        self.paths.insert(path, resp.into_bytes());
+    pub fn add_path(&mut self, path: String, resp: HttpResponse) {
+        let mut map = self.paths.lock().unwrap();
+        map.insert(path, resp.into_bytes());
     }
 
     /**
@@ -132,10 +135,9 @@ impl<'a> Server<'a> {
      * server.remove_path("/");
      * ```
      */
-    pub fn remove_path(&mut self, path: &'a str) {
-        if self.paths.contains_key(&path) {
-            self.paths.remove(path);
-        }
+    pub fn remove_path(&mut self, path: String) {
+        let mut map = self.paths.lock().unwrap();
+        map.remove(&path);
     }
 
     /**
