@@ -2,7 +2,7 @@ pub mod request;
 
 use request::{HttpRequest, HttpResponse};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io::{Read, Result, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -23,13 +23,14 @@ use std::sync::{Arc, Mutex};
  */
 #[derive(Clone)]
 pub struct Server {
-    paths: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    paths: Arc<Mutex<HashMap<String, HashMap<String, Vec<u8>>>>>,
     not_found: Arc<Vec<u8>>,  
 }
 
 impl Default for Server {
     fn default() -> Self {
         let mut paths = HashMap::new();
+        let mut methods = HashMap::new();
         let file = match fs::read_to_string("pages/default/index.html") {
             Ok(file) => file,
             Err(e) => {
@@ -48,7 +49,8 @@ impl Default for Server {
         let response = HttpResponse::new(file.as_str());
         let mut response_not_found = HttpResponse::new(file_not_found.as_str());
         response_not_found.change_status_line("HTTP/1.1 404 NOT FOUND");
-        paths.insert("/".to_string(), response.into_bytes());
+        methods.insert("GET".to_string(), response.into_bytes());
+        paths.insert("/".to_string(), methods);
         Server { paths: Arc::new(Mutex::new(paths)), not_found: Arc::new(response_not_found.into_bytes()) }
     }
 }
@@ -73,15 +75,10 @@ impl Server {
         println!("{} {}", request.method, request.path);
         
         let map = self.paths.lock().unwrap();
-        let response = match map.get(request.path) {
-            Some(bytes) => bytes,    // Found it? Copy the data.
-            None => &self.not_found,  // Not found? Copy the 404 page.
-        };
-        /*for path in map.iter() {
-            if *path.0 == request.path {
-                response = path.1;
-            }
-        }*/
+        
+        let response = map.get(request.path)
+        .and_then(|methods| methods.get(request.method))
+        .unwrap_or(&self.not_found);
         //println!("{:#?}", String::from_utf8_lossy(response));
         match stream.write_all(response) {
             Ok(w) => w,
@@ -114,7 +111,6 @@ impl Server {
             thread::spawn(move || {
                 server_clone.handle_client(stream);
             });
-
         }
         Ok(())
     }
@@ -126,9 +122,24 @@ impl Server {
      * server.add_path("/pizza");
      * ```
      */
-    pub fn add_path(&mut self, path: String, resp: HttpResponse) {
+    pub fn add_path(&mut self, method: &str, path: &str, resp: HttpResponse) {
+        let path = path.to_string();
+        let method = method.to_string();
+        let mut method_map = HashMap::new();
         let mut map = self.paths.lock().unwrap();
-        map.insert(path, resp.into_bytes());
+        method_map.insert(method.clone(), resp.into_bytes());
+        map
+            .entry(path)
+            .or_insert(method_map)
+            .insert(method, resp.into_bytes());
+    }
+
+    pub fn remove_method(&mut self, method: &str, path: &str) {
+        let path = path.to_string();
+        let mut map = self.paths.lock().unwrap();
+        if let Some(method_map) = map.get_mut(&path) {
+            method_map.remove(method);
+        }
     }
 
     /**
@@ -143,7 +154,8 @@ impl Server {
      * server.remove_path("/");
      * ```
      */
-    pub fn remove_path(&mut self, path: String) {
+    pub fn remove_path(&mut self, path: &str) {
+        let path = path.to_string();
         let mut map = self.paths.lock().unwrap();
         map.remove(&path);
     }
