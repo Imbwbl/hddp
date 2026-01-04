@@ -46,8 +46,10 @@ impl Default for Server {
             }
         };
         let response = HttpResponse::new(file.as_str());
+        let mut response_not_found = HttpResponse::new(file_not_found.as_str());
+        response_not_found.change_status_line("HTTP/1.1 404 NOT FOUND");
         paths.insert("/".to_string(), response.into_bytes());
-        Server { paths: Arc::new(Mutex::new(paths)), not_found: Arc::new(HttpResponse::new(file_not_found.as_str()).into_bytes()) }
+        Server { paths: Arc::new(Mutex::new(paths)), not_found: Arc::new(response_not_found.into_bytes()) }
     }
 }
 
