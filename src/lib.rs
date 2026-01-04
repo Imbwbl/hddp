@@ -3,6 +3,7 @@ pub mod request;
 use request::{HttpRequest, HttpResponse};
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs;
 use std::io::{Read, Result, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -94,9 +95,10 @@ impl<'a> Server<'a> {
      * }
      * ```
      */
-    pub fn listen<T: ToSocketAddrs>(&self, addr: T) -> Result<()> {
-        let listener = TcpListener::bind(addr)?;
+    pub fn listen<T: ToSocketAddrs + Display>(&self, addr: T) -> Result<()> {
+        let listener = TcpListener::bind(&addr)?;
 
+        println!("Started Listening on http://{}", addr);
         // accept connections and process them serially
         for stream in listener.incoming() {
             self.handle_client(stream?);
