@@ -64,6 +64,10 @@ impl<'a> HttpResponse<'a> {
         let _ = &self.headers.insert(k, v);
     }
 
+    pub fn remove_header(&mut self, k: &'a str) {
+        let _ = &self.headers.remove(k);
+    }
+
     pub fn into_bytes(&self) -> Vec<u8> {
         let result = format!(
             "{}\r\n{}\r\n\r\n{}",
